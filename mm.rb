@@ -11,8 +11,6 @@ require 'logger'
 LOG=Logger.new('mm.log')
 LOG.level = Logger::DEBUG
 
-
-
 def make_buckets(idx, speed, style)
   buckets=[]
   #LOG.debug "make_buckets: Index: #{idx}, Speed: #{speed}, Style: #{style}"
@@ -29,6 +27,32 @@ def make_buckets(idx, speed, style)
   LOG.debug "returning #{buckets.size} buckets"
   buckets
 end
+
+# going to try something a little different
+# and just return a html doc fragment, without
+# starting from a template
+def render_playlist(playlist_id)
+  playlist=Playlist[playlist_id]
+  @name=playlist.name
+  doc=Nokogiri::HTML::DocumentFragment.parse(haml(:playlist))
+  row=doc.at_css "tr.song"
+  trow = row.dupe
+  first=true
+  songs=Plsong.where(:playlist_id => playlist_id).order(:order).all
+  songs.each  do |song|
+  # already have first row in the template for layout purposes
+    unless first
+      last_row=row
+      row=trow.dup
+      last_row.add_next_sibling(row)
+    else
+      first=false
+    end
+    s=Song[song.song_id]
+  end
+end
+
+
 
 def render_song_list(html, songs)
   #LOG.debug html
@@ -162,39 +186,65 @@ end
 # use additional criteria passed in a hash to further restrict song selection
 # currently will support only the additional criteria of rating and length
 def new_playlist(m={})
+  # default selection parameters
   number=60
   max_length=0
   min_rating=0
   max_rating=0
   min_length=0
+  # assign if parameters got passed as arguments
   max_length = m[:length] if m.key?(:length)
   number=m[:number] if m.key?(:number)
+  # make a semi-randomized list of dances
   dances=make_a_dancelist(number)
+  # set up a unique name for playlist generated
+  now=Time.now
+  nows=now.strftime("%y%m%d%H%M%S")
+  name="pl_#{nows}"
+  # create the playlist in the database
+  playlist=Playlist.new()
+  playlist.name=name
+  playlist.save
+  ordinal=10
+  f=File.new("#{name}.m3u", "w")
   songs = []
   dances.each do |d|
+    # get all the songs for a dance
     la = Song.where(:dance=>d.dance)
+    # choose songs shorter than max_length
     if max_length > 0
       lb = la.where{:length < max_length}
       la=lb
     end
+    # choose songs with rating higher than min_rating
     if min_rating > 0
       lb = la.where{:rating >= min_rating}
       la=lb
     end
+    #get an enumeration by song uid
     lm = la.map(:uid)
+    # pick a random song
     idx = (rand() * (lm.length - 1)).round
+    # make sure I haven't picked it before
     songs.each do |uid|
       if lm[idx] == uid
         i = idx + 1
         idx = i % lm.length
       end
     end
-    songs << Song[:uid=>lm[idx]]
+    song=Song[:uid=>lm[idx]]
+    pls=Plsong.new
+    pls.order=ordinal
+    pls.song_id = song.id
+    pls.playlist_id = playlist.id
+    pls.save
+    ordinal = ordinal + 10
+    f.puts song.path
+    songs << song
   end
-  songs.each do |s|
-    #LOG.debug "#{s.dance} #{s.title}"
-  end
+  f.close
   songs 
+# create a unique name for the playlist
 end
 
 
@@ -280,30 +330,12 @@ class MMApp < Sinatra::Base
       name = row.at_css("td.name")
       name.content = pl.name
     end
+    doc.to_html
   end
   
   get '/playlist/new' do
     # generate a new random playlist
     songs = new_playlist
-    # create a unique name for the playlist
-    now=Time.now
-    nows=now.strftime("%y%m%d%H%M%S")
-    name="pl_#{nows}"
-    # create the playlist in the database
-    playlist=Playlist.new()
-    playlist.name=name
-    playlist.save
-    ordinal=10
-    f=File.new("#{name}.m3u", "w")
-    songs.each do |s|
-        item=Plsong.new
-        item.order = ordinal
-        item.song_id = s.id
-        item.save
-        ordinal = ordinal + 10
-        f.puts s.path
-    end
-    f.close
     render_song_list(haml(:list),songs)
   end
   
@@ -342,107 +374,3 @@ end
 
 #MMApp.run!
 
-__END__
-
-@@ layout
-%html
-  %head
-    %title #{@title}
-  %body
-    %div#main_content 
-      = yield
-    %div#footer
-      %a{:href => url("/")} Return to Main Page
- 
-
-@@ dances
-The interval is the minimum number of other dances that get played before a dance gets played again.
-%table
-  %tr.heading
-    %th Dance
-    %th Speed
-    %th Style
-    %th Interval
-    %th 
-    %th
-  %tr.dance
-    %form{:action=>"/change_weight", :method=>"post"}
-      %td
-        %input{:name=>'dance'}
-        %input{:name=>'id', :type=>'hidden'}
-      %td
-        %select{:name=>'speed'}
-          %option{:value=>1} Slow
-          %option{:value=>2} Medium
-          %option{:value=>3} Fast
-      %td
-        %select{:name=>'style'}
-          %option{:value=>1} Ballroom
-          %option{:value=>2} Latin/Rhythm
-          %option{:value=>3} Club
-          %option{:value=>4} Other
-      %td
-        %input{:name=>'interval'}
-      %td
-        %button{:type=>'submit'} Change It!    
-      %td
-        %a{:href=>"list/genre"} List Songs    
-
-          
-@@index
-%ul
-  %li
-    %a{:href=>url("dances")} List Dances
-  %li
-    %form{:action=>url("search"), :method=>"get"}
-      %input{:name=>'term', :size=>'60'}
-      %button{:type=>'submit'} Search
-  %li 
-    %a{:href=> url('playlist')} Make a playlist
- 
-@@playlists
-%table
-  %tr.heading
-    %td Name
-  %tr.playlist
-    %td.name &nbsp;  
-    
-@@dancelist
-%table
-%ol
-            
-@@list
-#message #{@message}
-#songs
-  %table
-    %tr.song
-      %form{:action=>"/modify", :method=>"post"}
-        %td 
-          %input{:name=>'uid', :type=>'hidden'}
-          %input{:name=>'title', :size=>"50"}
-        %td
-          %input{:name=>'artist', :size=>"30"}
-        %td
-          %input{:name=>'genre', :size=>"20"}
-        %td
-          %select{:name=>'rating'}
-            %option{:value=>'20'}20
-            %option{:value=>'40'}40
-            %option{:value=>'60'}60
-            %option{:value=>'80'}80
-            %option{:value=>'100'}100
-        %td
-          %button{:type=>'submit', :name=>'submit'} Change It!
-        %td
-          %input{:name=>'path', :size=>"50"}
-           
-            
-@@playlist
-#name #{@name}
-#songs
-  %table
-    %tr.song
-      %td.title
-      %td.artist
-      %td.genre
-      %td.order       

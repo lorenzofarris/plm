@@ -50,6 +50,7 @@ end
 
 unless DB.table_exists?(:plsongs)
   DB.create_table :plsongs do
+    primary_key :id
     foreign_key :playlist_id, :playlists
     foreign_key :song_id, :songs
     Integer :order
@@ -66,8 +67,11 @@ class Song < Sequel::Model
 end
 
 class Playlist < Sequel::Model
+  one_to_many :plsongs
 end
 
 class Plsong < Sequel::Model
+  many_to_one :playlist
+  one_to_one :song
 end
 
