@@ -11,6 +11,23 @@ require 'logger'
 LOG=Logger.new('mm.log')
 LOG.level = Logger::DEBUG
 
+# changing in consideration of song being
+# already changed before passing in 
+#def change_file_metadata(song, params)
+def change_file_metadata(song)
+  Mp3Info.open(song[:path]) do |mp3|
+    #song.dance=params['genre']
+    mp3.tag2.TCON=song.dance
+    #song.title=params['title']
+    mp3.tag.title=song.title
+    #song.artist=params['artist']
+    mp3.tag.artist=song.artist
+    #song.rating=params['rating'].to_i
+    mp3.tag2.POPM=song.rating
+    #song.save
+  end
+end
+
 def make_buckets(idx, speed, style)
   buckets=[]
   #LOG.debug "make_buckets: Index: #{idx}, Speed: #{speed}, Style: #{style}"
@@ -31,15 +48,15 @@ end
 # going to try something a little different
 # and just return a html doc fragment, without
 # starting from a template
-def render_playlist(playlist_id)
+def render_playlist(html, playlist_id)
   playlist=Playlist[playlist_id]
   @name=playlist.name
-  doc=Nokogiri::HTML::DocumentFragment.parse(haml(:playlist))
+  pl=playlist.plsongs
+  doc=Nokogiri::HTML::DocumentFragment.parse(html)
   row=doc.at_css "tr.song"
-  trow = row.dupe
+  trow = row.dup
   first=true
-  songs=Plsong.where(:playlist_id => playlist_id).order(:order).all
-  songs.each  do |song|
+  pl.each  do |item|
   # already have first row in the template for layout purposes
     unless first
       last_row=row
@@ -48,11 +65,35 @@ def render_playlist(playlist_id)
     else
       first=false
     end
-    s=Song[song.song_id]
+    song=item.song
+    row.at_css("input[name='uid']")['value']=song[:uid] ? "#{song[:uid]}" : "" 
+    row.at_css("input[name='playlist']")['value']="#{playlist_id}"
+    row.at_css("input[name='pl_entry']")['value']="#{item.id}"
+    row.at_css("input[name='title']")['value']="#{song.title}"
+    #title=row.at_css "td.title"
+    #title.content = song.title
+    #artist = row.at_css "td.artist"
+    #artist.content = song.artist
+    #genre = row.at_css "td.genre"
+    #genre.content = song.dance
+    row.at_css("input[name='artist']")['value']=song[:artist] ? "#{song[:artist]}" : ""
+    row.at_css("input[name='genre']")['value']=song[:dance] ? "#{song[:dance]}" : ""
+    #order= row.at_css "td.order"
+    #order.content = item.order
+    row.at_css("input[name='order']")['value']="#{item.order}"
+    unless song[:rating].nil? || song[:rating]==0
+      rating = "#{song[:rating]}"
+    else 
+      rating="0"
+    end   
+    select=row.at_css("select[name='rating'] option[value='#{rating}']")
+    select['selected']="true" unless select.nil?
+    path=row.at_css "td.path"
+    path.content=song.path
+    row.at_css
   end
+  doc
 end
-
-
 
 def render_song_list(html, songs)
   #LOG.debug html
@@ -90,7 +131,7 @@ def render_song_list(html, songs)
     row.at_css("input[name='uid']")['value']=song[:uid] ? "#{song[:uid]}" : ""
     row.at_css("input[name='path']")['value']=song[:path]
   end
-  doc.to_html
+  doc
 end
 
 def render_dance_list(html)
@@ -131,7 +172,7 @@ def render_dance_list(html)
     list_link=row.at_css "a"
     list_link['href']="list?dance=#{w.dance}"
   end
-  doc.to_html
+  doc
 end
 
 def how_many_of_each(songs)
@@ -247,12 +288,24 @@ def new_playlist(m={})
 # create a unique name for the playlist
 end
 
+def update_object(m, s, o, field)
+  # check if query parameter map m has the key s, 
+  # check if it is different than in the object with key k
+  # returns true if the object is change
+  LOG.debug("param #{s} is #{m[s]}")
+  if m.has_key?(s)
+    unless m[s] == o[field]
+      o[field] = m[s]
+      return true
+    end
+  end
+  return false
+end
 
 class MMApp < Sinatra::Base
   set :logging,true
   set :sessions,true
   set :method_override, true
-  set :inline_templates, true
   set :static, true
   set :haml, :format => :html5
   
@@ -275,7 +328,8 @@ class MMApp < Sinatra::Base
       @songs = Song.order(:dance).all
       #LOG.debug "#{@songs.count} matching songs"
     end
-    render_song_list(haml(:list),@songs)
+    doc=render_song_list(haml(:list),@songs)
+    doc.to_html
   end
   
   get '/search' do
@@ -288,14 +342,55 @@ class MMApp < Sinatra::Base
     else
       @songs = Song.order(:dance).all
     end
-    render_song_list(haml(:list),@songs)
+    doc=render_song_list(haml(:list),@songs)
+    doc.to_html
   end
   
   post '/modify' do
-    song=Song[:uid=>params['uid']]
-    change_file_metadata(song, params)
-    #@songs = Song.order(:dance).all    
-    render_dance_list(haml(:dances))
+    if params.has_key?('uid')
+          #primary_key :id
+          #String :uid, :index=>true, :unique=>true
+          #String :title
+          #String :artist
+          #String :dance
+          #String :path
+          #String :album
+          #Integer :rating
+          #Integer :bpm
+          #Float :length
+      modified=false      
+      song=Song[:uid=>params['uid']]
+      # doing it this way because ruby is pass by value
+      modified=true if update_object(params, 'title', song, :title)
+      modified=true if update_object(params, 'artist', song, :artist)
+      modified=true if update_object(params, 'genre', song, :dance)
+      modified=true if update_object(params, 'rating', song, :rating)
+      if modified 
+        song.save
+        change_file_metadata(song)
+      end
+    end
+    if params.has_key?('pl_entry')
+      #primary_key :id
+      #foreign_key :playlist_id, :playlists
+      #foreign_key :song_id, :songs
+      #Integer :order
+      modified=false
+      plsong=Plsong[params['pl_entry']]
+      modified=true if update_object(params, 'order', plsong, :order)
+      plsong.save if modified      
+    end
+    doc="nothing rendered"
+    if params.has_key?('playlist')
+      doc=render_playlist(haml(:playlist), params['playlist'])
+      LOG.debug("rendering playlist #{params['playlist']}")
+    else
+      #@songs = Song.order(:dance).all    
+      doc=render_dance_list(haml(:dances))
+      LOG.debug("rendering dance list")
+    end
+    #LOG.debug(doc.to_html)
+    doc.to_html
   end
   
   post '/change_weight' do
@@ -306,11 +401,20 @@ class MMApp < Sinatra::Base
       w.interval=params['interval'].to_i
       w.save
     end
-    render_dance_list(haml(:dances))
+    doc=render_dance_list(haml(:dances))
+    doc.to_html
   end
   
   get '/dances' do
-    render_dance_list(haml(:dances))
+    doc=render_dance_list(haml(:dances))
+    doc.to_html
+  end
+  
+  get '/playlist/:id' do
+    # display the playlist with the given id
+    # still need to gracefully handle case where playlist doesn't exist
+    doc = render_playlist(haml(:playlist), params[:id])
+    doc.to_html
   end
   
   get '/playlist' do
@@ -336,7 +440,8 @@ class MMApp < Sinatra::Base
   get '/playlist/new' do
     # generate a new random playlist
     songs = new_playlist
-    render_song_list(haml(:list),songs)
+    doc=render_song_list(haml(:list),songs)
+    doc.to_html
   end
   
   get '/dancelist' do

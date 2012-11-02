@@ -143,17 +143,20 @@ def dump_db
   end
 end
 
-def change_file_metadata(song, params)
+# changing in consideration of song being
+# already changed before passing in 
+#def change_file_metadata(song, params)
+def change_file_metadata(song,)
   Mp3Info.open(song[:path]) do |mp3|
-    song.dance=params['genre']
+    #song.dance=params['genre']
     mp3.tag2.TCON=song.dance
-    song.title=params['title']
+    #song.title=params['title']
     mp3.tag.title=song.title
-    song.artist=params['artist']
+    #song.artist=params['artist']
     mp3.tag.artist=song.artist
-    song.rating=params['rating'].to_i
+    #song.rating=params['rating'].to_i
     mp3.tag2.POPM=song.rating
-    song.save
+    #song.save
   end
 end
 

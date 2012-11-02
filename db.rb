@@ -64,6 +64,7 @@ class Weight < Sequel::Model
 end  
   
 class Song < Sequel::Model
+  one_to_many :plsongs
 end
 
 class Playlist < Sequel::Model
@@ -72,6 +73,6 @@ end
 
 class Plsong < Sequel::Model
   many_to_one :playlist
-  one_to_one :song
+  many_to_one :song
 end
 
