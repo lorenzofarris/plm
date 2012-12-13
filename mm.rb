@@ -291,7 +291,7 @@ end
 def update_object(m, s, o, field)
   # check if query parameter map m has the key s, 
   # check if it is different than in the object with key k
-  # returns true if the object is change
+  # returns true if the object is changed
   LOG.debug("param #{s} is #{m[s]}")
   if m.has_key?(s)
     unless m[s] == o[field]
